@@ -75,6 +75,11 @@ func resourcePrivateEndpoint() *pluginsdk.Resource {
 				ValidateFunc: azure.ValidateResourceID,
 			},
 
+			"preserve_dns_configuration": {
+				Type:     pluginsdk.TypeBool,
+				Optional: true,
+			},
+
 			"network_interface": {
 				Type:     pluginsdk.TypeList,
 				Computed: true,
@@ -115,7 +120,7 @@ func resourcePrivateEndpoint() *pluginsdk.Resource {
 						},
 						"private_dns_zone_ids": {
 							Type:     pluginsdk.TypeList,
-							Required: true,
+							Optional: true,
 							Elem: &pluginsdk.Schema{
 								Type:         pluginsdk.TypeString,
 								ValidateFunc: privatezones.ValidatePrivateDnsZoneID,
@@ -538,15 +543,27 @@ func resourcePrivateEndpointUpdate(d *pluginsdk.ResourceData, meta interface{}) 
 		if err != nil {
 			return err
 		}
-
+		preserveDnsConfiguration := d.Get("preserve_dns_configuration").(bool)
 		newDnsZoneGroups := d.Get("private_dns_zone_group").([]interface{})
 		newDnsZoneName := ""
+
+		if preserveDnsConfiguration {
+			log.Printf("[DEBUG] JANIK preserve_dns_configuration  %s..", preserveDnsConfiguration)
+			for _, existing := range *existingDnsZoneGroups {
+				log.Printf("[DEBUG] JANIK preserve_dns_configuration found this ID  %s..", existing.ID())
+			}
+		}
+
+		newDnsZoneGroups = d.Get("private_dns_zone_group").([]interface{})
+
 		if len(newDnsZoneGroups) > 0 {
 			groupRaw := newDnsZoneGroups[0].(map[string]interface{})
 			newDnsZoneName = groupRaw["name"].(string)
+			log.Printf("[DEBUG] JANIK preserve_dns_configuration  %s..", preserveDnsConfiguration)
+
 		}
 
-		needToRemove := newDnsZoneName == ""
+		needToRemove := newDnsZoneName == "" && preserveDnsConfiguration == false
 		nameHasChanged := false
 		if existingDnsZoneGroups != nil && newDnsZoneName != "" {
 			needToRemove = len(*existingDnsZoneGroups) > 0 && len(newDnsZoneGroups) == 0
@@ -560,7 +577,7 @@ func resourcePrivateEndpointUpdate(d *pluginsdk.ResourceData, meta interface{}) 
 			}
 		}
 
-		if needToRemove || nameHasChanged {
+		if needToRemove || nameHasChanged && preserveDnsConfiguration == false {
 			log.Printf("[DEBUG] Deleting the Existing Private DNS Zone Group associated with %s..", id)
 			if err := deletePrivateDnsZoneGroupForPrivateEndpoint(ctx, dnsClient, *id); err != nil {
 				return err
@@ -568,7 +585,7 @@ func resourcePrivateEndpointUpdate(d *pluginsdk.ResourceData, meta interface{}) 
 			log.Printf("[DEBUG] Deleted the Existing Private DNS Zone Group associated with %s.", id)
 		}
 
-		if len(privateDnsZoneGroup) > 0 {
+		if len(privateDnsZoneGroup) > 0 && preserveDnsConfiguration == false {
 			log.Printf("[DEBUG] Creating Private DNS Zone Group associated with %s..", id)
 			if err := createPrivateDnsZoneGroupForPrivateEndpoint(ctx, dnsClient, *id, privateDnsZoneGroup); err != nil {
 				return err
